@@ -27,7 +27,7 @@ data:
   target: src.utilities.data.datamodule.DataModuleFromConfig
   params:
     batch_size: 32 #16
-    num_workers: 3 #8
+    num_workers: 4 #8
 
     augmentation:
       mixup: 0.0
