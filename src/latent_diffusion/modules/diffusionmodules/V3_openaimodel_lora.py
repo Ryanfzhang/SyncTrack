@@ -17,9 +17,13 @@ from latent_diffusion.modules.diffusionmodules.util import (
     normalization,
     timestep_embedding,
 )
-from latent_diffusion.modules.attention import SpatialTransformer
+# from latent_diffusion.modules.attention import SpatialTransformer
+# from latent_diffusion.modules.attention_ear3d import SpatialTransformer
+# from latent_diffusion.modules.attention_beattf import SpatialTransformer
+# from latent_diffusion.modules.attention_beattf_v2 import SpatialTransformer
+# wok 1 都引用
+from latent_diffusion.modules.attention_crossattn_beattf_v2 import SyncSpatialTransformer, SpatialTransformer
 from einops import rearrange
-
 
 # dummy replace
 def convert_module_to_f16(x):
@@ -171,7 +175,7 @@ class Downsample(nn.Module):
             self.op = avg_pool_nd(dims, kernel_size=stride, stride=stride)
 
     def forward(self, x):
-        assert x.shape[1] == self.channels
+        # assert x.shape[1] == self.channels, print(x.shape, self.channels)
         return self.op(x)
 
 
@@ -308,8 +312,6 @@ class ResBlock(TimestepBlock):
         )
 
     def _forward(self, x, emb):
-        N = emb.shape[0]
-        B = x.shape[0]//N
         if self.updown:
             in_rest, in_conv = self.in_layers[:-1], self.in_layers[-1]
             h = in_rest(x)
@@ -319,8 +321,7 @@ class ResBlock(TimestepBlock):
         else:
             h = self.in_layers(x)
         emb_out = self.emb_layers(emb).type(h.dtype)
-        emb_out = emb_out[None, ..., None, None].expand(B, -1, -1, -1, -1)
-        emb_out = emb_out.reshape(x.shape[0], -1, 1, 1)
+        emb_out = emb_out[..., None, None]
         if self.use_scale_shift_norm:
             out_norm, out_rest = self.out_layers[0], self.out_layers[1:]
             scale, shift = th.chunk(emb_out, 2, dim=1)
@@ -359,6 +360,14 @@ class AttentionBlock(nn.Module):
         self.use_checkpoint = use_checkpoint
         self.norm = normalization(channels)
         self.qkv = conv_nd(1, channels, channels * 3, 1)
+
+        # lora
+        lora_rank=16
+        self.lora_qkv_down = nn.Linear(channels, lora_rank, bias=False)
+        self.lora_qkv_up = nn.Linear(lora_rank, channels * 3, bias=False)
+        nn.init.zeros_(self.lora_qkv_up.weight)
+        self.lora_alpha = 1/ lora_rank
+
         if use_new_attention_order:
             # split qkv before split heads
             self.attention = QKVAttention(self.num_heads)
@@ -367,6 +376,9 @@ class AttentionBlock(nn.Module):
             self.attention = QKVAttentionLegacy(self.num_heads)
 
         self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
+        self.lora_proj_out_down = nn.Linear(channels, lora_rank, bias=False)
+        self.lora_proj_out_up = nn.Linear(lora_rank, channels, bias=False)
+        nn.init.zeros_(self.lora_proj_out_up.weight)
 
     def forward(self, x):
         return checkpoint(
@@ -377,9 +389,21 @@ class AttentionBlock(nn.Module):
     def _forward(self, x):
         b, c, *spatial = x.shape
         x = x.reshape(b, c, -1).contiguous()
-        qkv = self.qkv(self.norm(x)).contiguous()
+        x_norm = self.norm(x)
+        qkv = self.qkv(x_norm).contiguous()
+
+        x_norm_permuted = x_norm.permute(0, 2, 1)  
+        lora_qkv = self.lora_qkv_up(self.lora_qkv_down(x_norm_permuted))
+        lora_qkv = lora_qkv.permute(0, 2, 1)  
+        qkv = qkv + self.lora_alpha * lora_qkv
+
         h = self.attention(qkv).contiguous()
         h = self.proj_out(h).contiguous()
+        h_permuted = h.permute(0, 2, 1)  
+        lora_proj_out = self.lora_proj_out_up(self.lora_proj_out_down(h_permuted))
+        lora_proj_out = lora_proj_out.permute(0, 2, 1) 
+        proj_out = proj_out + self.lora_alpha * lora_proj_out
+
         return (x + h).reshape(b, c, *spatial).contiguous()
 
 
@@ -533,7 +557,8 @@ class UNetModel(nn.Module):
         context_dim=None,  # custom transformer support
         n_embed=None,  # custom support for prediction of discrete ids into codebook of first stage vq model
         legacy=True,
-        no_condition=False
+        no_condition=False,
+        num_sync_blocks=7  # Number of output blocks to use SyncSpatialTransformer wok
     ):
         super().__init__()
         if num_heads_upsample == -1:
@@ -567,6 +592,7 @@ class UNetModel(nn.Module):
         self.num_heads_upsample = num_heads_upsample
         self.predict_codebook_ids = n_embed is not None
         self.extra_film_use_concat = extra_film_use_concat
+        self.num_sync_blocks = num_sync_blocks # wok
         time_embed_dim = model_channels * 4
         self.no_condition = no_condition
         self.time_embed = nn.Sequential(
@@ -640,7 +666,8 @@ class UNetModel(nn.Module):
 
 
         )  
-
+        t = 256
+        f = 16
         self._feature_size = model_channels
         input_block_chans = [model_channels]
         ch = model_channels
@@ -650,7 +677,7 @@ class UNetModel(nn.Module):
                 layers = [
                     ResBlock(
                         ch,
-                        time_embed_dim
+                        time_embed_dim * 2
                         if (not self.use_extra_film_by_concat)
                         else time_embed_dim * 2,
                         dropout,
@@ -686,6 +713,7 @@ class UNetModel(nn.Module):
                             ch,
                             num_heads,
                             dim_head,
+                            (t // ds, f // ds),
                             depth=transformer_depth,
                             context_dim=context_dim,
                             no_context=spatial_transformer_no_context,
@@ -703,7 +731,7 @@ class UNetModel(nn.Module):
                     TimestepEmbedSequential(
                         ResBlock(
                             ch,
-                            time_embed_dim
+                            time_embed_dim * 2
                             if (not self.use_extra_film_by_concat)
                             else time_embed_dim * 2,
                             dropout,
@@ -736,7 +764,7 @@ class UNetModel(nn.Module):
         self.middle_block = TimestepEmbedSequential(
             ResBlock(
                 ch,
-                time_embed_dim
+                time_embed_dim * 2
                 if (not self.use_extra_film_by_concat)
                 else time_embed_dim * 2,
                 dropout,
@@ -752,17 +780,18 @@ class UNetModel(nn.Module):
                 use_new_attention_order=use_new_attention_order,
             )
             if not use_spatial_transformer
-            else SpatialTransformer(
+            else SyncSpatialTransformer(
                 ch,
                 num_heads,
                 dim_head,
+                (t // ds, f // ds),
                 depth=transformer_depth,
                 context_dim=context_dim,
                 no_context=spatial_transformer_no_context,
             ),
             ResBlock(
                 ch,
-                time_embed_dim
+                time_embed_dim * 2
                 if (not self.use_extra_film_by_concat)
                 else time_embed_dim * 2,
                 dropout,
@@ -775,6 +804,27 @@ class UNetModel(nn.Module):
 
         # self.downsample_layers_after_middle_block = Downsample_one_dim(ch, conv_resample, dims=dims, target_dim = 2)
 
+
+        num_sync_blocks = self.num_sync_blocks # wok
+        
+        # Calculate total number of attention blocks in output_blocks
+        total_attention_blocks = 0
+        temp_ds = ds  # Start with current ds value
+        
+        for level, mult in list(enumerate(channel_mult))[::-1]:
+            for i in range(num_res_blocks + 1):
+                if temp_ds in attention_resolutions:
+                    total_attention_blocks += 1
+                # Only update ds at the end of each level (except first level)
+                if level and i == num_res_blocks:
+                    temp_ds //= 2  # This matches the ds //= 2 in the actual loop
+        self.total_attention_blocks = total_attention_blocks
+        
+        print(f"Total attention blocks: {total_attention_blocks}") # wok debug
+        print(f"Sync blocks: {num_sync_blocks}") # wok debug
+        print(f"Last {num_sync_blocks} blocks will use SyncSpatialTransformer") # wok debug
+        
+        count = 0
         self.output_blocks = nn.ModuleList([])
         for level, mult in list(enumerate(channel_mult))[::-1]:
             for i in range(num_res_blocks + 1):
@@ -782,7 +832,7 @@ class UNetModel(nn.Module):
                 layers = [
                     ResBlock(
                         ch + ich,
-                        time_embed_dim
+                        time_embed_dim * 2
                         if (not self.use_extra_film_by_concat)
                         else time_embed_dim * 2,
                         dropout,
@@ -806,30 +856,33 @@ class UNetModel(nn.Module):
                             if use_spatial_transformer
                             else num_head_channels
                         )
-                    layers.append(
-                        AttentionBlock(
-                            ch,
-                            use_checkpoint=use_checkpoint,
-                            num_heads=num_heads_upsample,
-                            num_head_channels=dim_head,
-                            use_new_attention_order=use_new_attention_order,
-                        )
-                        if not use_spatial_transformer
-                        else SpatialTransformer(
+                    #wok 2:判断加哪个
+                    if not use_spatial_transformer:
+                        layers.append(
+                            AttentionBlock(
+                                ch,
+                                use_checkpoint=use_checkpoint,
+                                num_heads=num_heads_upsample,
+                                num_head_channels=dim_head,
+                                use_new_attention_order=use_new_attention_order,
+                            ))
+                    else:
+                        layers.append(SyncSpatialTransformer(
                             ch,
                             num_heads,
                             dim_head,
+			                (t // ds, f // ds),
                             depth=transformer_depth,
                             context_dim=context_dim,
                             no_context=spatial_transformer_no_context,
-                        )
-                    )
+                        ))
+                    count+=1
                 if level and i == num_res_blocks:
                     out_ch = ch
                     layers.append(
                         ResBlock(
                             ch,
-                            time_embed_dim
+                            time_embed_dim * 2
                             if (not self.use_extra_film_by_concat)
                             else time_embed_dim * 2,
                             dropout,
@@ -860,10 +913,15 @@ class UNetModel(nn.Module):
 
         self.shape_reported = False
 
+        self.switcher = nn.Parameter(th.eye(4).fliplr(), requires_grad=False)
         self.switcher_transform = nn.Sequential(nn.Linear(8, 128), 
         nn.SiLU(), 
         nn.Linear(128, time_embed_dim)
         )
+    
+    def get_total_output_blocks(self):
+        """Get the total number of output blocks"""
+        return len(self.output_blocks)
 
     def convert_to_fp16(self):
         """
@@ -890,8 +948,11 @@ class UNetModel(nn.Module):
         :param y: an [N] Tensor of labels, if class-conditional. an [N, extra_film_condition_dim] Tensor if film-embed conditional
         :return: an [N x C x ...] Tensor of outputs.
         """
-        B, N, C, T, F = x.shape
-        x = rearrange(x, "B N C T F->(B N) C T F")
+        B, C, T, F = x.shape
+        N = 4
+        B = B//4
+        # context = context.unsqueeze(1).expand(-1, N, -1, -1, -1)
+
         if not self.shape_reported:
             print("The shape of UNet input is", x.size())
             self.shape_reported = True
@@ -902,59 +963,38 @@ class UNetModel(nn.Module):
         hs = []
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
         emb = self.time_embed(t_emb)
-
-        switcher_class = th.eye(4, device=x.device, dtype=x.dtype).fliplr()
-        switcher_embedding = th.cat([th.sin(switcher_class), th.cos(switcher_class)], dim=-1)
-		
-        switch_emb = self.switcher_transform(switcher_embedding)
-        # switch_emb = self.switcher_transform(self.switcher)
+        switcher = th.cat([th.sin(self.switcher), th.cos(self.switcher)], dim=-1)
+        switch_emb = self.switcher_transform(switcher)
 
         if self.num_classes is not None:
             assert y.shape == (x.shape[0],)
             emb = emb + self.label_emb(y)
 
-        emb = emb.unsqueeze(1).expand(-1, N, -1)
         switch_emb = switch_emb.unsqueeze(0).expand(B, N, -1)
 
         if self.use_extra_film_by_addition:
             emb = emb + self.film_emb(y)
         elif self.use_extra_film_by_concat:
             emb = th.cat([emb.reshape(B*N, -1), switch_emb.reshape(B*N, -1)], dim=-1)
+        else: # this
+            emb = th.cat([emb, switch_emb.reshape(B*N,-1)], dim=-1)
+            # emb = th.cat([emb, th.zeros_like(switch_emb.reshape(B*N,-1))], dim=-1)
 
-        h = x.type(self.dtype)
-        h, mix = th.chunk(h, chunks=2, dim=1)
-
-        mix_list = []
-        mix = mix[:, 0:1, :, :]
-        mix_list.append(mix)
-        for i in range(len(self.downsample_layers)):
-            mix = self.downsample_layers[i](mix)
-            mix_list.append(mix)
-
-        # for module in self.input_blocks:
-        for i, module in enumerate(self.input_blocks):
-            mix_i = mix_list[i]
-            mix_to_add =  mix_i.repeat(1, h.shape[1], 1, 1)
-            h = h + mix_to_add        
+        h = x.type(self.dtype) # [5*4, C=16, T=256, F=16]
+        h, mix = th.chunk(h, chunks=2, dim=1) # [5*4, C=8, T=256, F=16]
+        for module in self.input_blocks:
             h = module(h, emb, context)
             hs.append(h)
         h = self.middle_block(h, emb, context)
-        for i, module in enumerate(self.output_blocks):
+        for module in self.output_blocks:
             h = th.cat([h, hs.pop()], dim=1)
-
-            mix_i = mix_list[len(mix_list)-i-1]
-            mix_to_add =  mix_i.repeat(1, h.shape[1], 1, 1)
-            h = h + mix_to_add
-
             h = module(h, emb, context)
         h = h.type(x.dtype)
         if self.predict_codebook_ids:
             out = id_predictor(h)
-            out = rearrange(out, "(B N) C T F->B N C T F", B=B)
             return out
         else:
             out = self.out(h)
-            out = rearrange(out, "(B N) C T F->B N C T F", B=B)
             return out
 
 

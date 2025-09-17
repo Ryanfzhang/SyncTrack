@@ -489,6 +489,8 @@ class CustomTransformerBlock(nn.Module):
         self.norm2 = nn.LayerNorm(dim)
         self.norm3 = nn.LayerNorm(dim)
         self.checkpoint = checkpoint
+        # self.gate_weight = nn.Parameter(0.8*torch.ones(dim), requires_grad=True)
+        self.gate_weight = nn.Parameter(torch.zeros(dim), requires_grad=True)
 
         # Enable xformers for CustomJointAttention
         self.attn_cross_track.set_use_memory_efficient_attention_xformers(True)
@@ -501,34 +503,164 @@ class CustomTransformerBlock(nn.Module):
                 self._forward, (x, context), self.parameters(), self.checkpoint
             )
 
+    # def _forward(self, x, context=None):
+    #     x_ori = x.clone()
+
+    #     # 1. Branch 1 self-attention
+    #     x = self.attn1(self.norm1(x)) + x # [B*4, T*F, C] [40, 4096, 320]
+    #     # 4. Final cross attention
+    #     x1 = self.attn2(self.norm2(x), context=context) + x
+        
+    #     # 2. Branch 2 CustomJointAttention
+    #     x = self.attn_cross_track(self.norm_ct(x_ori)) + x_ori
+    #     if self.image_size is not None:
+    #         T, F = self.image_size
+    #         B_inst, tf, C = x.shape
+    #         assert T*F == tf
+    #         batch = B_inst // 4
+    #         instr = 4
+    #         x = rearrange(x, '(b s) (t f) c -> (b t f) s c', s=instr, c=C, b=batch, f=F, t=T)  # [B*4*C, S, F] [204800, 4, 64]
+    #         x = self.attn_beat(x) + x
+    #         x = rearrange(x, '(b t f) s c -> (b s) (t f) c', s=instr, c=C, b=batch, f=F, t=T)
+
+    #     # weight  = self.gate_weight.unsqueeze(0).unsqueeze(0)
+    #     weight = torch.sigmoid(self.gate_weight).unsqueeze(0).unsqueeze(0)
+
+    #     x = weight * x1 + (1 - weight) * x
+    #     # Feed forward
+    #     x = self.ff(self.norm3(x)) + x
+    #     return x
+
+
     def _forward(self, x, context=None):
-        # 1. Original self-attention
-        x = self.attn1(self.norm1(x)) + x # [B*4, T*F, C] [40, 4096, 320]
+        # 1. Branch 1 Self-attention + Cross attention
+        x_branch1 = self.attn1(self.norm1(x)) + x # [B*4, T*F, C] [40, 4096, 320]
+        x_branch1 = self.attn2(self.norm2(x_branch1), context=context) + x_branch1
         
-        # 2. CustomJointAttention
-        x = self.attn_cross_track(self.norm_ct(x)) + x
-        
-        # 3. BeatTransformer attention
+        # 2. Branch 2 CustomJointAttention
+        x_branch2 = self.attn_cross_track(self.norm_ct(x)) + x
         if self.image_size is not None:
             T, F = self.image_size
-            B_inst, tf, C = x.shape
+            B_inst, tf, C = x_branch2.shape
             assert T*F == tf
             batch = B_inst // 4
             instr = 4
-            x = rearrange(x, '(b s) (t f) c -> (b t f) s c', s=instr, c=C, b=batch, f=F, t=T)  # [B*4*C, S, F] [204800, 4, 64]
-            x = self.attn_beat(x) + x
-            x = rearrange(x, '(b t f) s c -> (b s) (t f) c', s=instr, c=C, b=batch, f=F, t=T)
-        
-        # 4. Final cross attention
-        x = self.attn2(self.norm2(x), context=context) + x
-        
+            x_branch2 = rearrange(x_branch2, '(b s) (t f) c -> (b t f) s c', s=instr, c=C, b=batch, f=F, t=T)  # [B*4*C, S, F] [204800, 4, 64]
+            x_branch2 = self.attn_beat(x_branch2) + x_branch2
+            x_branch2 = rearrange(x_branch2, '(b t f) s c -> (b s) (t f) c', s=instr, c=C, b=batch, f=F, t=T)
+
+        # weight  = self.gate_weight.unsqueeze(0).unsqueeze(0)
+        weight = torch.sigmoid(self.gate_weight).unsqueeze(0).unsqueeze(0)
+
+        x_fused = weight * x_branch1 + (1 - weight) * x_branch2
         # Feed forward
+        x_out = self.ff(self.norm3(x_fused)) + x_fused
+        return x_out
+
+class BasicTransformerBlock(nn.Module):
+    def __init__(
+        self,
+        dim,
+        n_heads,
+        d_head,
+        dropout=0.0,
+        context_dim=None,
+        gated_ff=True,
+        checkpoint=True,
+    ):
+        super().__init__()
+        self.attn1 = CrossAttention(
+            query_dim=dim, heads=n_heads, dim_head=d_head, dropout=dropout
+        )  # is a self-attention
+        self.ff = FeedForward(dim, dropout=dropout, glu=gated_ff)
+        self.attn2 = CrossAttention(
+            query_dim=dim,
+            context_dim=context_dim,
+            heads=n_heads,
+            dim_head=d_head,
+            dropout=dropout,
+        )  # is self-attn if context is none
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
+        self.norm3 = nn.LayerNorm(dim)
+        self.checkpoint = checkpoint
+
+    def forward(self, x, context=None):
+        if context is None:
+            return checkpoint(self._forward, (x,), self.parameters(), self.checkpoint)
+        else:
+            return checkpoint(
+                self._forward, (x, context), self.parameters(), self.checkpoint
+            )
+
+    def _forward(self, x, context=None):
+        x = self.attn1(self.norm1(x)) + x
+        x = self.attn2(self.norm2(x), context=context) + x
         x = self.ff(self.norm3(x)) + x
         return x
 
-
-
 class SpatialTransformer(nn.Module):
+    """
+    Transformer block for image-like data.
+    First, project the input (aka embedding)
+    and reshape to b, t, d.
+    Then apply standard transformer action.
+    Finally, reshape to image
+    """
+
+    def __init__(
+        self,
+        in_channels,
+        n_heads,
+        d_head,
+        image_size=None,
+        depth=1,
+        dropout=0.0,
+        context_dim=None,
+        no_context=False,
+    ):
+        super().__init__()
+
+        if no_context:
+            context_dim = None
+
+        self.in_channels = in_channels
+        inner_dim = n_heads * d_head
+        self.norm = Normalize(in_channels)
+
+        self.proj_in = nn.Conv2d(
+            in_channels, inner_dim, kernel_size=1, stride=1, padding=0
+        )
+
+        self.transformer_blocks = nn.ModuleList(
+            [
+                BasicTransformerBlock(
+                    inner_dim, n_heads, d_head, dropout=dropout, context_dim=context_dim
+                )
+                for d in range(depth)
+            ]
+        )
+
+        self.proj_out = zero_module(
+            nn.Conv2d(inner_dim, in_channels, kernel_size=1, stride=1, padding=0)
+        )
+
+    def forward(self, x, context=None):
+        # note: if no context is given, cross-attention defaults to self-attention
+        b, c, h, w = x.shape
+        x_in = x
+        x = self.norm(x)
+        x = self.proj_in(x)
+        x = rearrange(x, "b c h w -> b (h w) c")
+        for block in self.transformer_blocks:
+            x = block(x, context=context)
+        x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
+        x = self.proj_out(x)
+        return x + x_in
+
+
+
+class SyncSpatialTransformer(nn.Module):
     """
     Transformer block for image-like data.
     First, project the input (aka embedding)
