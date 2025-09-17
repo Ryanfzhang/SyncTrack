@@ -6,7 +6,7 @@
 #SBATCH --mail-user=mafzhang@ust.hk
 #SBATCH --time=72:00:00
 #SBATCH --account=earthhk
-#SBATCH --output=logs/Bioocean.first
+#SBATCH --output=log_sbatch/exp1
 #SBATCH --cpus-per-gpu=8
 
 ###############################
