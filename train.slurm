@@ -6,7 +6,7 @@
 #SBATCH --mail-user=mafzhang@ust.hk
 #SBATCH --time=72:00:00
 #SBATCH --account=earthhk
-#SBATCH --output=log_sbatch/exp2.out
+#SBATCH --output=log_sbatch/exp3.out
 #SBATCH --cpus-per-gpu=4
 
 ###############################

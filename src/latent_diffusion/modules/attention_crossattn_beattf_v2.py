@@ -198,6 +198,26 @@ class CrossAttention(nn.Module):
         # Final linear layer
         self.to_out = nn.Sequential(nn.Linear(d_attn, query_dim), nn.Dropout(dropout))
 
+        # Lora
+        lora_rank=16
+        self.lora_to_q_down = nn.Linear(query_dim, lora_rank, bias=False)
+        self.lora_to_q_up = nn.Linear(lora_rank, d_attn, bias=False)
+        nn.init.zeros_(self.lora_to_q_up.weight)
+
+        self.lora_to_k_down = nn.Linear(context_dim, lora_rank, bias=False)
+        self.lora_to_k_up = nn.Linear(lora_rank, d_attn, bias=False)
+        nn.init.zeros_(self.lora_to_k_up.weight)
+
+        self.lora_to_v_down = nn.Linear(context_dim, lora_rank, bias=False)
+        self.lora_to_v_up = nn.Linear(lora_rank, d_attn, bias=False)
+        nn.init.zeros_(self.lora_to_v_up.weight)
+       
+        self.lora_to_out_down = nn.Linear(d_attn, lora_rank, bias=False)
+        self.lora_to_out_up = nn.Linear(lora_rank, query_dim, bias=False)
+        nn.init.zeros_(self.lora_to_out_up.weight)
+
+        self.lora_alpha = 1.0
+
         # Setup [flash attention](https://github.com/HazyResearch/flash-attention).
         # Flash attention is only used if it's installed
         # and `CrossAttention.use_flash_attention` is set to `True`.
@@ -229,6 +249,9 @@ class CrossAttention(nn.Module):
         q = self.to_q(x)
         k = self.to_k(context)
         v = self.to_v(context)
+        q = q + self.lora_alpha * self.lora_to_q_up(self.lora_to_q_down(x))
+        k = k + self.lora_alpha * self.lora_to_k_up(self.lora_to_k_down(context))
+        v = v + self.lora_alpha * self.lora_to_v_up(self.lora_to_v_down(context))
 
         # Use flash attention if it's available and the head size is less than or equal to `128`
         if (
@@ -287,7 +310,13 @@ class CrossAttention(nn.Module):
         out = out.reshape(batch_size, seq_len, self.n_heads * self.d_head)
 
         # Map to `[batch_size, height * width, d_model]` with a linear layer
-        return self.to_out(out)
+        # return self.to_out(out)
+
+        # Lora
+        base_out = self.to_out(out)
+        # Add LoRA for output projection
+        lora_out = self.lora_to_out_up(self.lora_to_out_down(out))
+        return base_out + self.lora_alpha * lora_out
 
     def normal_attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
         """
@@ -323,7 +352,13 @@ class CrossAttention(nn.Module):
         # Reshape to `[batch_size, height * width, n_heads * d_head]`
         out = out.reshape(*out.shape[:2], -1)
         # Map to `[batch_size, height * width, d_model]` with a linear layer
-        return self.to_out(out)
+        # return self.to_out(out)
+
+        # Lora
+        base_out = self.to_out(out)
+        # Add LoRA for output projection
+        lora_out = self.lora_to_out_up(self.lora_to_out_down(out))
+        return base_out + self.lora_alpha * lora_out
 
 
 

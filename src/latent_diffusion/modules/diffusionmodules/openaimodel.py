@@ -359,6 +359,14 @@ class AttentionBlock(nn.Module):
         self.use_checkpoint = use_checkpoint
         self.norm = normalization(channels)
         self.qkv = conv_nd(1, channels, channels * 3, 1)
+
+        # lora
+        lora_rank=16
+        self.lora_qkv_down = nn.Linear(channels, lora_rank, bias=False)
+        self.lora_qkv_up = nn.Linear(lora_rank, channels * 3, bias=False)
+        nn.init.zeros_(self.lora_qkv_up.weight)
+        self.lora_alpha = 1.0
+
         if use_new_attention_order:
             # split qkv before split heads
             self.attention = QKVAttention(self.num_heads)
@@ -367,6 +375,9 @@ class AttentionBlock(nn.Module):
             self.attention = QKVAttentionLegacy(self.num_heads)
 
         self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
+        self.lora_proj_out_down = nn.Linear(channels, lora_rank, bias=False)
+        self.lora_proj_out_up = nn.Linear(lora_rank, channels, bias=False)
+        nn.init.zeros_(self.lora_proj_out_up.weight)
 
     def forward(self, x):
         return checkpoint(
@@ -377,9 +388,21 @@ class AttentionBlock(nn.Module):
     def _forward(self, x):
         b, c, *spatial = x.shape
         x = x.reshape(b, c, -1).contiguous()
-        qkv = self.qkv(self.norm(x)).contiguous()
+        x_norm = self.norm(x)
+        qkv = self.qkv(x_norm).contiguous()
+
+        x_norm_permuted = x_norm.permute(0, 2, 1)  
+        lora_qkv = self.lora_qkv_up(self.lora_qkv_down(x_norm_permuted))
+        lora_qkv = lora_qkv.permute(0, 2, 1)  
+        qkv = qkv + self.lora_alpha * lora_qkv
+
         h = self.attention(qkv).contiguous()
         h = self.proj_out(h).contiguous()
+        h_permuted = h.permute(0, 2, 1)  
+        lora_proj_out = self.lora_proj_out_up(self.lora_proj_out_down(h_permuted))
+        lora_proj_out = lora_proj_out.permute(0, 2, 1) 
+        proj_out = h + self.lora_alpha * lora_proj_out
+
         return (x + h).reshape(b, c, *spatial).contiguous()
 
 
