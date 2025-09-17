@@ -7,7 +7,7 @@
 #SBATCH --time=72:00:00
 #SBATCH --account=earthhk
 #SBATCH --output=log_sbatch/exp1
-#SBATCH --cpus-per-gpu=8
+#SBATCH --cpus-per-gpu=1
 
 ###############################
 
