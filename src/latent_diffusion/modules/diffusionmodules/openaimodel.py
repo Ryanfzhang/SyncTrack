@@ -709,7 +709,7 @@ class UNetModel(nn.Module):
                             use_new_attention_order=use_new_attention_order,
                         )
                         if not use_spatial_transformer
-                        else SpatialTransformer(
+                        else SyncSpatialTransformer(
                             ch,
                             num_heads,
                             dim_head,
