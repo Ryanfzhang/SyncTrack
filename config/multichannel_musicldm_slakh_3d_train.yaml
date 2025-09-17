@@ -1,11 +1,11 @@
-project_name: "multichannel_gen_and_sep_slakh_3.0.2"
+project_name: "NCD"
 log_directory: "logs"
 mode: train #validate_and_train
 dev: False
 
 id:
-  version: "zero_unconditional"
-  name: "3_D_4_stems_slakh" #masking"
+  version: "Train"
+  name: "Exp1" #masking"
 
 trainer:
   validation_every_n_steps: #25000 #0[00
@@ -26,7 +26,7 @@ trainer:
 data:
   target: src.utilities.data.datamodule.DataModuleFromConfig
   params:
-    batch_size: 16 #16
+    batch_size: 32 #16
     num_workers: 3 #8
 
     augmentation:
@@ -38,9 +38,9 @@ data:
     path:
       dataset_type: "MultiSource_Slakh"
       train_data:
-        - /home/hwangfb/Desktop/data/slakh2100/slakh2100/train
-        - /home/hwangfb/Desktop/data/slakh2100/slakh2100/validation
-      valid_data: /home/hwangfb/Desktop/data/slakh2100/slakh2100/test
+        - /project/earthhk/slakh2100/train
+        - /project/earthhk/slakh2100/validation
+      valid_data: /project/earthhk/slakh2100/test
       test_data: #"data/Audiostock-10k-16khz/test_split_audio_content_analysis.json"
       label_data: #"data/Audiostock-10k-16khz/label"
       tempo_data: ""
