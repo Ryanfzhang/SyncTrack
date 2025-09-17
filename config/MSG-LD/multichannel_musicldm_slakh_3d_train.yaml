@@ -8,7 +8,7 @@ id:
   name: "Exp1" #masking"
 
 trainer:
-  validation_every_n_steps: #25000 #0[00
+  validation_every_n_steps: 5 #25000 #0[00
   save_checkpoint_every_n_steps: #25000 #25000
   save_top_k: 2
   max_epochs: 1200 #1200
