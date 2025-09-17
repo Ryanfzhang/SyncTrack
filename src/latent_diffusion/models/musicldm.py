@@ -943,15 +943,49 @@ class MusicLDM(DDPM):
             self.init_from_ckpt(ckpt_path, ignore_keys)
             self.restarted_from_ckpt = True
 
+        self.ckpt_path = ckpt_path
         self.z_channels = first_stage_config["params"]["ddconfig"]["z_channels"]
 
         self.seperate_stem_z = seperate_stem_z
         self.use_silence_weight = use_silence_weight
         self.tau = tau
 
+    def get_trainable_params(self, path, experiment=1):        
+        print("*"*48)
+        print(f"Get trainable params - Experiment {experiment}")
+        print("*"*48)
+
+        
+        new_params = []
+        print(f"Missing keys: {len(self.missing_keys)}")
+
+        num_emb_layers = 0
+        num_output_blocks = 0
+        num_missing = 0
+
+        for name, param in self.model.named_parameters():
+            should_train = False
+            missing_name = f"model.{name}" if not name.startswith("model.") else name
+            if missing_name in self.missing_keys: # 565
+                should_train = True
+                num_missing += 1
+            # elif "emb_layers" in name: # 44
+            #     should_train = True
+            #     num_emb_layers += 1
+    
+            if should_train:
+                print(f"Trainable param: {name}") # wok debug
+                new_params.append(param)
+        
+        print(f"Total trainable parameters: {len(new_params)}") # 2:969
+        print(f"Number of emb_layers: {num_emb_layers}") # 44
+        print(f"Number of output_blocks: {num_output_blocks}") # 360
+        print(f"Number of missing: {num_missing}") # 565
+        return new_params
+
     def configure_optimizers(self):
         lr = self.learning_rate
-        params = list(self.model.parameters())
+        params = self.get_trainable_params(self.ckpt_path)
         if self.cond_stage_trainable:
             print(f"{self.__class__.__name__}: Also optimizing conditioner params!")
             params = params + list(self.cond_stage_model.parameters())
