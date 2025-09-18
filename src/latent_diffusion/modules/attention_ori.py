@@ -423,7 +423,6 @@ class SpatialTransformer(nn.Module):
         in_channels,
         n_heads,
         d_head,
-        image_size=None,
         depth=1,
         dropout=0.0,
         context_dim=None,

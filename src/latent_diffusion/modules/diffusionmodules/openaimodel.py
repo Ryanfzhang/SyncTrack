@@ -21,8 +21,7 @@ from latent_diffusion.modules.diffusionmodules.util import (
 # from latent_diffusion.modules.attention_ear3d import SpatialTransformer
 # from latent_diffusion.modules.attention_beattf import SpatialTransformer
 # from latent_diffusion.modules.attention_beattf_v2 import SpatialTransformer
-# wok 1 都引用
-from latent_diffusion.modules.attention_crossattn_beattf_v2 import SyncSpatialTransformer, SpatialTransformer
+from latent_diffusion.modules.attention_crossattn_beattf_v2 import SpatialTransformer
 from einops import rearrange
 
 # dummy replace
@@ -360,14 +359,6 @@ class AttentionBlock(nn.Module):
         self.use_checkpoint = use_checkpoint
         self.norm = normalization(channels)
         self.qkv = conv_nd(1, channels, channels * 3, 1)
-
-        # lora
-        lora_rank=16
-        self.lora_qkv_down = nn.Linear(channels, lora_rank, bias=False)
-        self.lora_qkv_up = nn.Linear(lora_rank, channels * 3, bias=False)
-        nn.init.zeros_(self.lora_qkv_up.weight)
-        self.lora_alpha = 1.0
-
         if use_new_attention_order:
             # split qkv before split heads
             self.attention = QKVAttention(self.num_heads)
@@ -376,9 +367,6 @@ class AttentionBlock(nn.Module):
             self.attention = QKVAttentionLegacy(self.num_heads)
 
         self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
-        self.lora_proj_out_down = nn.Linear(channels, lora_rank, bias=False)
-        self.lora_proj_out_up = nn.Linear(lora_rank, channels, bias=False)
-        nn.init.zeros_(self.lora_proj_out_up.weight)
 
     def forward(self, x):
         return checkpoint(
@@ -389,21 +377,9 @@ class AttentionBlock(nn.Module):
     def _forward(self, x):
         b, c, *spatial = x.shape
         x = x.reshape(b, c, -1).contiguous()
-        x_norm = self.norm(x)
-        qkv = self.qkv(x_norm).contiguous()
-
-        x_norm_permuted = x_norm.permute(0, 2, 1)  
-        lora_qkv = self.lora_qkv_up(self.lora_qkv_down(x_norm_permuted))
-        lora_qkv = lora_qkv.permute(0, 2, 1)  
-        qkv = qkv + self.lora_alpha * lora_qkv
-
+        qkv = self.qkv(self.norm(x)).contiguous()
         h = self.attention(qkv).contiguous()
         h = self.proj_out(h).contiguous()
-        h_permuted = h.permute(0, 2, 1)  
-        lora_proj_out = self.lora_proj_out_up(self.lora_proj_out_down(h_permuted))
-        lora_proj_out = lora_proj_out.permute(0, 2, 1) 
-        proj_out = proj_out + self.lora_alpha * lora_proj_out
-
         return (x + h).reshape(b, c, *spatial).contiguous()
 
 
@@ -557,8 +533,7 @@ class UNetModel(nn.Module):
         context_dim=None,  # custom transformer support
         n_embed=None,  # custom support for prediction of discrete ids into codebook of first stage vq model
         legacy=True,
-        no_condition=False,
-        num_sync_blocks=7  # Number of output blocks to use SyncSpatialTransformer wok
+        no_condition=False
     ):
         super().__init__()
         if num_heads_upsample == -1:
@@ -592,7 +567,6 @@ class UNetModel(nn.Module):
         self.num_heads_upsample = num_heads_upsample
         self.predict_codebook_ids = n_embed is not None
         self.extra_film_use_concat = extra_film_use_concat
-        self.num_sync_blocks = num_sync_blocks # wok
         time_embed_dim = model_channels * 4
         self.no_condition = no_condition
         self.time_embed = nn.Sequential(
@@ -709,7 +683,7 @@ class UNetModel(nn.Module):
                             use_new_attention_order=use_new_attention_order,
                         )
                         if not use_spatial_transformer
-                        else SyncSpatialTransformer(
+                        else SpatialTransformer(
                             ch,
                             num_heads,
                             dim_head,
@@ -780,7 +754,7 @@ class UNetModel(nn.Module):
                 use_new_attention_order=use_new_attention_order,
             )
             if not use_spatial_transformer
-            else SyncSpatialTransformer(
+            else SpatialTransformer(
                 ch,
                 num_heads,
                 dim_head,
@@ -804,27 +778,6 @@ class UNetModel(nn.Module):
 
         # self.downsample_layers_after_middle_block = Downsample_one_dim(ch, conv_resample, dims=dims, target_dim = 2)
 
-
-        num_sync_blocks = self.num_sync_blocks # wok
-        
-        # Calculate total number of attention blocks in output_blocks
-        total_attention_blocks = 0
-        temp_ds = ds  # Start with current ds value
-        
-        for level, mult in list(enumerate(channel_mult))[::-1]:
-            for i in range(num_res_blocks + 1):
-                if temp_ds in attention_resolutions:
-                    total_attention_blocks += 1
-                # Only update ds at the end of each level (except first level)
-                if level and i == num_res_blocks:
-                    temp_ds //= 2  # This matches the ds //= 2 in the actual loop
-        self.total_attention_blocks = total_attention_blocks
-        
-        print(f"Total attention blocks: {total_attention_blocks}") # wok debug
-        print(f"Sync blocks: {num_sync_blocks}") # wok debug
-        print(f"Last {num_sync_blocks} blocks will use SyncSpatialTransformer") # wok debug
-        
-        count = 0
         self.output_blocks = nn.ModuleList([])
         for level, mult in list(enumerate(channel_mult))[::-1]:
             for i in range(num_res_blocks + 1):
@@ -856,27 +809,25 @@ class UNetModel(nn.Module):
                             if use_spatial_transformer
                             else num_head_channels
                         )
-                    #wok 2:判断加哪个
-                    if not use_spatial_transformer:
-                        layers.append(
-                            AttentionBlock(
-                                ch,
-                                use_checkpoint=use_checkpoint,
-                                num_heads=num_heads_upsample,
-                                num_head_channels=dim_head,
-                                use_new_attention_order=use_new_attention_order,
-                            ))
-                    else:
-                        layers.append(SyncSpatialTransformer(
+                    layers.append(
+                        AttentionBlock(
+                            ch,
+                            use_checkpoint=use_checkpoint,
+                            num_heads=num_heads_upsample,
+                            num_head_channels=dim_head,
+                            use_new_attention_order=use_new_attention_order,
+                        )
+                        if not use_spatial_transformer
+                        else SpatialTransformer(
                             ch,
                             num_heads,
                             dim_head,
-			                (t // ds, f // ds),
+                            (t // ds, f // ds),
                             depth=transformer_depth,
                             context_dim=context_dim,
                             no_context=spatial_transformer_no_context,
-                        ))
-                    count+=1
+                        )
+                    )
                 if level and i == num_res_blocks:
                     out_ch = ch
                     layers.append(
@@ -898,15 +849,6 @@ class UNetModel(nn.Module):
                     ds //= 2
                 self.output_blocks.append(TimestepEmbedSequential(*layers))
                 self._feature_size += ch
-        #self.sync = SyncSpatialTransformer(
-        #                    ch,
-        #                    num_heads,
-        #                    dim_head//4,
-		#	                (t // ds, f // ds),
-        #                    depth=transformer_depth,
-        #                    context_dim=context_dim,
-        #                    no_context=spatial_transformer_no_context,
-        #                )
 
         self.out = nn.Sequential(
             normalization(ch),
@@ -927,10 +869,6 @@ class UNetModel(nn.Module):
         nn.SiLU(), 
         nn.Linear(128, time_embed_dim)
         )
-    
-    def get_total_output_blocks(self):
-        """Get the total number of output blocks"""
-        return len(self.output_blocks)
 
     def convert_to_fp16(self):
         """
@@ -999,7 +937,6 @@ class UNetModel(nn.Module):
             h = th.cat([h, hs.pop()], dim=1)
             h = module(h, emb, context)
         h = h.type(x.dtype)
-        # h = self.sync(h, context)
         if self.predict_codebook_ids:
             out = id_predictor(h)
             return out

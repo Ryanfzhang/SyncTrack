@@ -312,22 +312,11 @@ class DDPM(pl.LightningModule):
                 self.model_ema.restore(self.model.parameters())
                 if context is not None:
                     print(f"{context}: Restored training weights")
-    
 
     def init_from_ckpt(self, path, ignore_keys=list(), only_model=False):
         sd = torch.load(path, map_location="cpu")
         if "state_dict" in list(sd.keys()):
             sd = sd["state_dict"]
-
-
-        # Separate EMA parameters and regular parameters
-        ema_keys = [k for k in sd.keys() if k.startswith("model_ema.")]
-        model_keys = [k for k in sd.keys() if not k.startswith("model_ema.")]
-        
-        print(f"Checkpoint contains:")
-        print(f"  Regular parameters: {len(model_keys)}")
-        print(f"  EMA parameters: {len(ema_keys)}")
-
         keys = list(sd.keys())
         for k in keys:
             for ik in ignore_keys:
@@ -339,32 +328,13 @@ class DDPM(pl.LightningModule):
             if not only_model
             else self.model.load_state_dict(sd, strict=False)
         )
-
-        self.missing_keys = missing
-        
-        print(f"  Missing: {len(missing)}")
-        print(f"  Unexpected: {len(unexpected)}")
-        
-        # Handle EMA parameters
-        if ema_keys and hasattr(self, 'model_ema') and self.model_ema is not None:
-            print(f"\nProcessing EMA parameters...")
-            
-            # Create EMA parameter mapping
-            ema_sd = {}
-            for k, v in sd.items():
-                if k.startswith("model_ema."):
-                    # Remove model_ema. prefix, convert to buffer name format
-                    ema_key = k[10:].replace(".", "")  # Remove dots
-                    ema_sd[ema_key] = v
-            
-            # Load EMA parameters to buffers
-            try:
-                self.model_ema.load_state_dict(ema_sd, strict=False)
-                print("✓ EMA parameters loaded successfully")
-            except Exception as e:
-                print(f"✗ Failed to load EMA parameters: {e}")
-        
-        print(f"\nOverall loading result: {len(missing)} missing, {len(unexpected)} unexpected")
+        print(
+            f"Restored from {path} with {len(missing)} missing and {len(unexpected)} unexpected keys"
+        )
+        if len(missing) > 0:
+            print(f"Missing Keys: {missing}")
+        if len(unexpected) > 0:
+            print(f"Unexpected Keys: {unexpected}")
 
     def q_mean_variance(self, x_start, t):
         """
@@ -659,7 +629,12 @@ class DDPM(pl.LightningModule):
                     use_plms=False,
                     stemidx_to_inpaint = stemidx_to_inpaint,
                 )
+
             else:
+                
+
+
+
                 self.generate_sample(
                     [batch],
                     name=name,
@@ -692,111 +667,111 @@ class DDPM(pl.LightningModule):
 
     @torch.no_grad()
     def on_validation_epoch_end(self) -> None:
-        # if self.global_rank == 0:
-        #     self.test_data_subset_path = os.path.join(self.get_log_dir(), "target_%s" % (self.global_step))
+        if self.global_rank == 0:
+            self.test_data_subset_path = os.path.join(self.get_log_dir(), "target_%s" % (self.global_step))
     
-        #     if self.test_data_subset_path is not None:
-        #         from audioldm_eval import EvaluationHelper
+            if self.test_data_subset_path is not None:
+                from audioldm_eval import EvaluationHelper
 
-        #         print(
-        #             "Evaluate model output based on the data savee in: %s"
-        #             % self.test_data_subset_path
-        #         )
-        #         device = self.device #torch.device(f"cuda:{0}")
-        #         name = self.get_validation_folder_name()
-        #         waveform_save_path = os.path.join(self.get_log_dir(), name)
-        #         if (
-        #             os.path.exists(waveform_save_path)
-        #             and len(os.listdir(waveform_save_path)) > 0
-        #         ):
-        #             # evaluator = EvaluationHelper(16000, device)
-        #             # metrics = evaluator.main(
-        #             #     waveform_save_path,
-        #             #     self.test_data_subset_path,
-        #             # )
+                print(
+                    "Evaluate model output based on the data savee in: %s"
+                    % self.test_data_subset_path
+                )
+                device = self.device #torch.device(f"cuda:{0}")
+                name = self.get_validation_folder_name()
+                waveform_save_path = os.path.join(self.get_log_dir(), name)
+                if (
+                    os.path.exists(waveform_save_path)
+                    and len(os.listdir(waveform_save_path)) > 0
+                ):
+                    # evaluator = EvaluationHelper(16000, device)
+                    # metrics = evaluator.main(
+                    #     waveform_save_path,
+                    #     self.test_data_subset_path,
+                    # )
 
-        #             # self.metrics_buffer = {
-        #             #     ("val/" + k): float(v) for k, v in metrics.items()
-        #             # }
-        #             dir1 = Path(waveform_save_path)
-        #             dir2 = Path(self.test_data_subset_path)
+                    # self.metrics_buffer = {
+                    #     ("val/" + k): float(v) for k, v in metrics.items()
+                    # }
+                    dir1 = Path(waveform_save_path)
+                    dir2 = Path(self.test_data_subset_path)
 
-        #             # Get set of folder names in each directory
-        #             dir1_folders = {folder.name for folder in dir1.iterdir() if folder.is_dir()}
-        #             dir2_folders = {folder.name for folder in dir2.iterdir() if folder.is_dir()}
+                    # Get set of folder names in each directory
+                    dir1_folders = {folder.name for folder in dir1.iterdir() if folder.is_dir()}
+                    dir2_folders = {folder.name for folder in dir2.iterdir() if folder.is_dir()}
 
-        #             # Find the intersection of folder names existing in both directories
-        #             # matching_folders = dir1_folders & dir2_folders
+                    # Find the intersection of folder names existing in both directories
+                    # matching_folders = dir1_folders & dir2_folders
 
-        #             # Find the intersection of folder names existing in both directories, excluding those with "mel" in their names
-        #             matching_folders = {folder for folder in (dir1_folders & dir2_folders) if "mel" not in folder.lower()}
+                    # Find the intersection of folder names existing in both directories, excluding those with "mel" in their names
+                    matching_folders = {folder for folder in (dir1_folders & dir2_folders) if "mel" not in folder.lower()}
 
-        #             # Iterate through matching folders and perform operations
-        #             for folder_name in matching_folders:
-        #                 folder1 = dir1 / folder_name
-        #                 folder2 = dir2 / folder_name
+                    # Iterate through matching folders and perform operations
+                    for folder_name in matching_folders:
+                        folder1 = dir1 / folder_name
+                        folder2 = dir2 / folder_name
 
-        #                 print("\nNow evaliating:", folder_name)
+                        print("\nNow evaliating:", folder_name)
 
-        #                 evaluator = EvaluationHelper(16000, device)
-        #                 metrics = evaluator.main(
-        #                     str(folder1),
-        #                     str(folder2),
-        #                 )
-        #                 self.metrics_buffer = {
-        #                     (f"val/{folder_name}/" + k): float(v) for k, v in metrics.items()
-        #                 }
+                        evaluator = EvaluationHelper(16000, device)
+                        metrics = evaluator.main(
+                            str(folder1),
+                            str(folder2),
+                        )
+                        self.metrics_buffer = {
+                            (f"val/{folder_name}/" + k): float(v) for k, v in metrics.items()
+                        }
 
-        #                 if len(self.metrics_buffer.keys()) > 0:
-        #                     for k in self.metrics_buffer.keys():
-        #                         self.log(
-        #                             k,
-        #                             self.metrics_buffer[k],
-        #                             prog_bar=False,
-        #                             logger=True,
-        #                             on_step=False,
-        #                             on_epoch=True,
-        #                         )
-        #                         print(k, self.metrics_buffer[k])
-        #                     self.metrics_buffer = {}
+                        if len(self.metrics_buffer.keys()) > 0:
+                            for k in self.metrics_buffer.keys():
+                                self.log(
+                                    k,
+                                    self.metrics_buffer[k],
+                                    prog_bar=False,
+                                    logger=True,
+                                    on_step=False,
+                                    on_epoch=True,
+                                )
+                                print(k, self.metrics_buffer[k])
+                            self.metrics_buffer = {}
 
-        #             # Find the intersection of folder names existing in both directories, excluding those with "mel" in their names
-        #             matching_folders = {folder for folder in (dir1_folders & dir2_folders) if "mel" in folder.lower()}
-        #             # Iterate through matching folders and perform operations
-        #             for folder_name in matching_folders:
-        #                 folder1 = dir1 / folder_name
-        #                 folder2 = dir2 / folder_name
+                    # Find the intersection of folder names existing in both directories, excluding those with "mel" in their names
+                    matching_folders = {folder for folder in (dir1_folders & dir2_folders) if "mel" in folder.lower()}
+                    # Iterate through matching folders and perform operations
+                    for folder_name in matching_folders:
+                        folder1 = dir1 / folder_name
+                        folder2 = dir2 / folder_name
 
-        #                 print("\nNow evaliating:", folder_name)
+                        print("\nNow evaliating:", folder_name)
 
-        #                 results_mse = evaluate_separations(folder1, folder2)
+                        results_mse = evaluate_separations(folder1, folder2)
 
-        #                 self.metrics_buffer = {
-        #                     (f"val/{folder_name}/" + k): float(v) for k, v in results_mse.items()
-        #                 }
+                        self.metrics_buffer = {
+                            (f"val/{folder_name}/" + k): float(v) for k, v in results_mse.items()
+                        }
 
-        #                 if len(self.metrics_buffer.keys()) > 0:
-        #                     for k in self.metrics_buffer.keys():
-        #                         self.log(
-        #                             k,
-        #                             self.metrics_buffer[k],
-        #                             prog_bar=False,
-        #                             logger=True,
-        #                             on_step=False,
-        #                             on_epoch=True,
-        #                         )
-        #                         print(k, self.metrics_buffer[k])
-        #                     self.metrics_buffer = {}
-
-
+                        if len(self.metrics_buffer.keys()) > 0:
+                            for k in self.metrics_buffer.keys():
+                                self.log(
+                                    k,
+                                    self.metrics_buffer[k],
+                                    prog_bar=False,
+                                    logger=True,
+                                    on_step=False,
+                                    on_epoch=True,
+                                )
+                                print(k, self.metrics_buffer[k])
+                            self.metrics_buffer = {}
 
 
 
-                # else:
-                #     print(
-                #         "The target folder for evaluation does not exist: %s"
-                #         % waveform_save_path
-                #     )
+
+
+                else:
+                    print(
+                        "The target folder for evaluation does not exist: %s"
+                        % waveform_save_path
+                    )
 
         self.cond_stage_key = self.cond_stage_key_orig
         if self.cond_stage_model is not None:
@@ -944,86 +919,15 @@ class MusicLDM(DDPM):
             self.init_from_ckpt(ckpt_path, ignore_keys)
             self.restarted_from_ckpt = True
 
-        self.ckpt_path = ckpt_path
         self.z_channels = first_stage_config["params"]["ddconfig"]["z_channels"]
 
         self.seperate_stem_z = seperate_stem_z
         self.use_silence_weight = use_silence_weight
         self.tau = tau
-    
-
-
-    # # Experiment 1 & 2
-    # def get_trainable_params(self, path, experiment=1):        
-    #     print("*"*48)
-    #     print(f"Get trainable params - Experiment {experiment}")
-    #     print("*"*48)
-
-    #     new_params = []
-    #     print(f"Missing keys: {len(self.missing_keys)}")
-
-    #     num_emb_layers = 0
-    #     num_output_blocks = 0
-    #     num_missing = 0
-    #     for name, param in self.model.named_parameters():
-    #         should_train = False
-    #         missing_name = f"model.{name}" if not name.startswith("model.") else name
-    #         if missing_name in self.missing_keys: # 565
-    #             should_train = True
-    #             num_missing += 1
-    #         elif "emb_layers" in name: # 44
-    #             should_train = True
-    #             num_emb_layers += 1
-    #         elif experiment == 2 and "output_blocks" in name:
-    #             should_train = True
-    #             num_output_blocks += 1
-    
-    #         if should_train:
-    #             new_params.append(param)
-        
-    #     print(f"Total trainable parameters: {len(new_params)}") # 2:969
-    #     print(f"Number of emb_layers: {num_emb_layers}") # 44
-    #     print(f"Number of output_blocks: {num_output_blocks}") # 360
-    #     print(f"Number of missing: {num_missing}") # 565
-
-    #     return new_params
-
-    def get_trainable_params(self, path, experiment=1):        
-        print("*"*48)
-        print(f"Get trainable params - Experiment {experiment}")
-        print("*"*48)
-
-        
-        new_params = []
-        print(f"Missing keys: {len(self.missing_keys)}")
-
-        num_emb_layers = 0
-        num_output_blocks = 0
-        num_missing = 0
-
-        for name, param in self.model.named_parameters():
-            should_train = False
-            missing_name = f"model.{name}" if not name.startswith("model.") else name
-            if missing_name in self.missing_keys: # 565
-                should_train = True
-                num_missing += 1
-            # elif "emb_layers" in name: # 44
-            #     should_train = True
-            #     num_emb_layers += 1
-    
-            if should_train:
-                print(f"Trainable param: {name}") # wok debug
-                new_params.append(param)
-        
-        print(f"Total trainable parameters: {len(new_params)}") # 2:969
-        print(f"Number of emb_layers: {num_emb_layers}") # 44
-        print(f"Number of output_blocks: {num_output_blocks}") # 360
-        print(f"Number of missing: {num_missing}") # 565
-        return new_params
 
     def configure_optimizers(self):
         lr = self.learning_rate
-        params = self.get_trainable_params(self.ckpt_path)
+        params = list(self.model.parameters())
         if self.cond_stage_trainable:
             print(f"{self.__class__.__name__}: Also optimizing conditioner params!")
             params = params + list(self.cond_stage_model.parameters())
@@ -1045,108 +949,6 @@ class MusicLDM(DDPM):
             ]
             return [opt], scheduler
         return opt
-
-    # # Experiment 3
-    # def get_trainable_params(self, path):      # Trainable params: 617   
-    #     print("*"*48)
-    #     print("Get trainable params -- Experiment 3")
-    #     print("*"*48)
-        
-    #     new_params = []
-    #     new_params_lora = []
-        
-    #     print(f"Missing keys: {len(self.missing_keys)}")
-        
-    #     num_emb_layers = 0
-    #     num_missing = 0
-    #     num_missing_lora = 0
-        
-    #     for name, param in self.model.named_parameters():
-    #         should_train = False
-    #         is_lora = False
-            
-    #         # 检查是否在missing_keys中（去掉model.前缀后比较）
-    #         missing_name = f"model.{name}" if not name.startswith("model.") else name
-    #         if missing_name in self.missing_keys:
-    #             should_train = True
-    #             if "lora" in name:
-    #                 is_lora = True
-    #                 num_missing_lora += 1
-    #             else:
-    #                 num_missing += 1
-    #         elif "emb_layers" in name:
-    #             should_train = True
-    #             num_emb_layers += 1
-            
-    #         if should_train:
-    #             if is_lora:
-    #                 new_params_lora.append(param)
-    #             else:
-    #                 new_params.append(param)
-        
-    #     print(f"Total trainable parameters: {len(new_params) + len(new_params_lora)}") # 609
-    #     print(f"Number of emb_layers: {num_emb_layers}") # 44
-    #     print(f"Number of missing (non-lora): {num_missing}") # 309
-    #     print(f"Number of missing (lora): {num_missing_lora}") # 256
-    #     print(f"Regular params: {len(new_params)}") # 353
-    #     print(f"LoRA params: {len(new_params_lora)}") # 256
-    #     return new_params, new_params_lora # 353, 256
-
-    # def configure_optimizers(self):
-    #     lr = self.learning_rate
-    #     params, params_lora = self.get_trainable_params(self.ckpt_path)
-    #     print("Params Lora contains {} item".format(len(params_lora)))
-
-    #     if self.cond_stage_trainable:
-    #         print(f"{self.__class__.__name__}: Also optimizing conditioner params!")
-    #         params = params + list(self.cond_stage_model.parameters())
-    #     if self.learn_logvar:
-    #         print("Diffusion model optimizing logvar")
-    #         params.append(self.logvar)
-    #     opt = torch.optim.AdamW([{"params": params, "lr": lr}, 
-    #                              {"params": params_lora, "lr": 0.01*lr}], lr=lr)
-    #     if self.use_scheduler:
-    #         assert "target" in self.scheduler_config
-    #         scheduler = instantiate_from_config(self.scheduler_config)
-
-    #         print("Setting up LambdaLR scheduler...")
-    #         scheduler = [
-    #             {
-    #                 "scheduler": LambdaLR(opt, lr_lambda=scheduler.schedule),
-    #                 "interval": "step",
-    #                 "frequency": 1,
-    #             }
-    #         ]
-    #         return [opt], scheduler
-    #     return opt
-
-    # # Experiment 4 
-    # def configure_optimizers(self): # Trainable params: 1253
-    #     lr = self.learning_rate
-    #     params = list(self.model.parameters())
-
-    #     if self.cond_stage_trainable:
-    #         print(f"{self.__class__.__name__}: Also optimizing conditioner params!")
-    #         params = params + list(self.cond_stage_model.parameters())
-    #     if self.learn_logvar:
-    #         print("Diffusion model optimizing logvar")
-    #         params.append(self.logvar)
-    #     opt = torch.optim.AdamW(params, lr=lr)
-    #     if self.use_scheduler:
-    #         assert "target" in self.scheduler_config
-    #         scheduler = instantiate_from_config(self.scheduler_config)
-
-    #         print("Setting up LambdaLR scheduler...")
-    #         scheduler = [
-    #             {
-    #                 "scheduler": LambdaLR(opt, lr_lambda=scheduler.schedule),
-    #                 "interval": "step",
-    #                 "frequency": 1,
-    #             }
-    #         ]
-    #         return [opt], scheduler
-    #     return opt
-    
 
     def make_cond_schedule(
         self,
