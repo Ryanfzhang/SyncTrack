@@ -667,111 +667,111 @@ class DDPM(pl.LightningModule):
 
     @torch.no_grad()
     def on_validation_epoch_end(self) -> None:
-        if self.global_rank == 0:
-            self.test_data_subset_path = os.path.join(self.get_log_dir(), "target_%s" % (self.global_step))
+        # if self.global_rank == 0:
+        #     self.test_data_subset_path = os.path.join(self.get_log_dir(), "target_%s" % (self.global_step))
     
-            if self.test_data_subset_path is not None:
-                from audioldm_eval import EvaluationHelper
+        #     if self.test_data_subset_path is not None:
+        #         from audioldm_eval import EvaluationHelper
 
-                print(
-                    "Evaluate model output based on the data savee in: %s"
-                    % self.test_data_subset_path
-                )
-                device = self.device #torch.device(f"cuda:{0}")
-                name = self.get_validation_folder_name()
-                waveform_save_path = os.path.join(self.get_log_dir(), name)
-                if (
-                    os.path.exists(waveform_save_path)
-                    and len(os.listdir(waveform_save_path)) > 0
-                ):
-                    # evaluator = EvaluationHelper(16000, device)
-                    # metrics = evaluator.main(
-                    #     waveform_save_path,
-                    #     self.test_data_subset_path,
-                    # )
+        #         print(
+        #             "Evaluate model output based on the data savee in: %s"
+        #             % self.test_data_subset_path
+        #         )
+        #         device = self.device #torch.device(f"cuda:{0}")
+        #         name = self.get_validation_folder_name()
+        #         waveform_save_path = os.path.join(self.get_log_dir(), name)
+        #         if (
+        #             os.path.exists(waveform_save_path)
+        #             and len(os.listdir(waveform_save_path)) > 0
+        #         ):
+        #             # evaluator = EvaluationHelper(16000, device)
+        #             # metrics = evaluator.main(
+        #             #     waveform_save_path,
+        #             #     self.test_data_subset_path,
+        #             # )
 
-                    # self.metrics_buffer = {
-                    #     ("val/" + k): float(v) for k, v in metrics.items()
-                    # }
-                    dir1 = Path(waveform_save_path)
-                    dir2 = Path(self.test_data_subset_path)
+        #             # self.metrics_buffer = {
+        #             #     ("val/" + k): float(v) for k, v in metrics.items()
+        #             # }
+        #             dir1 = Path(waveform_save_path)
+        #             dir2 = Path(self.test_data_subset_path)
 
-                    # Get set of folder names in each directory
-                    dir1_folders = {folder.name for folder in dir1.iterdir() if folder.is_dir()}
-                    dir2_folders = {folder.name for folder in dir2.iterdir() if folder.is_dir()}
+        #             # Get set of folder names in each directory
+        #             dir1_folders = {folder.name for folder in dir1.iterdir() if folder.is_dir()}
+        #             dir2_folders = {folder.name for folder in dir2.iterdir() if folder.is_dir()}
 
-                    # Find the intersection of folder names existing in both directories
-                    # matching_folders = dir1_folders & dir2_folders
+        #             # Find the intersection of folder names existing in both directories
+        #             # matching_folders = dir1_folders & dir2_folders
 
-                    # Find the intersection of folder names existing in both directories, excluding those with "mel" in their names
-                    matching_folders = {folder for folder in (dir1_folders & dir2_folders) if "mel" not in folder.lower()}
+        #             # Find the intersection of folder names existing in both directories, excluding those with "mel" in their names
+        #             matching_folders = {folder for folder in (dir1_folders & dir2_folders) if "mel" not in folder.lower()}
 
-                    # Iterate through matching folders and perform operations
-                    for folder_name in matching_folders:
-                        folder1 = dir1 / folder_name
-                        folder2 = dir2 / folder_name
+        #             # Iterate through matching folders and perform operations
+        #             for folder_name in matching_folders:
+        #                 folder1 = dir1 / folder_name
+        #                 folder2 = dir2 / folder_name
 
-                        print("\nNow evaliating:", folder_name)
+        #                 print("\nNow evaliating:", folder_name)
 
-                        evaluator = EvaluationHelper(16000, device)
-                        metrics = evaluator.main(
-                            str(folder1),
-                            str(folder2),
-                        )
-                        self.metrics_buffer = {
-                            (f"val/{folder_name}/" + k): float(v) for k, v in metrics.items()
-                        }
+        #                 evaluator = EvaluationHelper(16000, device)
+        #                 metrics = evaluator.main(
+        #                     str(folder1),
+        #                     str(folder2),
+        #                 )
+        #                 self.metrics_buffer = {
+        #                     (f"val/{folder_name}/" + k): float(v) for k, v in metrics.items()
+        #                 }
 
-                        if len(self.metrics_buffer.keys()) > 0:
-                            for k in self.metrics_buffer.keys():
-                                self.log(
-                                    k,
-                                    self.metrics_buffer[k],
-                                    prog_bar=False,
-                                    logger=True,
-                                    on_step=False,
-                                    on_epoch=True,
-                                )
-                                print(k, self.metrics_buffer[k])
-                            self.metrics_buffer = {}
+        #                 if len(self.metrics_buffer.keys()) > 0:
+        #                     for k in self.metrics_buffer.keys():
+        #                         self.log(
+        #                             k,
+        #                             self.metrics_buffer[k],
+        #                             prog_bar=False,
+        #                             logger=True,
+        #                             on_step=False,
+        #                             on_epoch=True,
+        #                         )
+        #                         print(k, self.metrics_buffer[k])
+        #                     self.metrics_buffer = {}
 
-                    # Find the intersection of folder names existing in both directories, excluding those with "mel" in their names
-                    matching_folders = {folder for folder in (dir1_folders & dir2_folders) if "mel" in folder.lower()}
-                    # Iterate through matching folders and perform operations
-                    for folder_name in matching_folders:
-                        folder1 = dir1 / folder_name
-                        folder2 = dir2 / folder_name
+        #             # Find the intersection of folder names existing in both directories, excluding those with "mel" in their names
+        #             matching_folders = {folder for folder in (dir1_folders & dir2_folders) if "mel" in folder.lower()}
+        #             # Iterate through matching folders and perform operations
+        #             for folder_name in matching_folders:
+        #                 folder1 = dir1 / folder_name
+        #                 folder2 = dir2 / folder_name
 
-                        print("\nNow evaliating:", folder_name)
+        #                 print("\nNow evaliating:", folder_name)
 
-                        results_mse = evaluate_separations(folder1, folder2)
+        #                 results_mse = evaluate_separations(folder1, folder2)
 
-                        self.metrics_buffer = {
-                            (f"val/{folder_name}/" + k): float(v) for k, v in results_mse.items()
-                        }
+        #                 self.metrics_buffer = {
+        #                     (f"val/{folder_name}/" + k): float(v) for k, v in results_mse.items()
+        #                 }
 
-                        if len(self.metrics_buffer.keys()) > 0:
-                            for k in self.metrics_buffer.keys():
-                                self.log(
-                                    k,
-                                    self.metrics_buffer[k],
-                                    prog_bar=False,
-                                    logger=True,
-                                    on_step=False,
-                                    on_epoch=True,
-                                )
-                                print(k, self.metrics_buffer[k])
-                            self.metrics_buffer = {}
-
-
+        #                 if len(self.metrics_buffer.keys()) > 0:
+        #                     for k in self.metrics_buffer.keys():
+        #                         self.log(
+        #                             k,
+        #                             self.metrics_buffer[k],
+        #                             prog_bar=False,
+        #                             logger=True,
+        #                             on_step=False,
+        #                             on_epoch=True,
+        #                         )
+        #                         print(k, self.metrics_buffer[k])
+        #                     self.metrics_buffer = {}
 
 
 
-                else:
-                    print(
-                        "The target folder for evaluation does not exist: %s"
-                        % waveform_save_path
-                    )
+
+
+        #         else:
+        #             print(
+        #                 "The target folder for evaluation does not exist: %s"
+        #                 % waveform_save_path
+        #             )
 
         self.cond_stage_key = self.cond_stage_key_orig
         if self.cond_stage_model is not None:
