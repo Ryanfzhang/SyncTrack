@@ -671,7 +671,7 @@ class DDPM(pl.LightningModule):
 
             print(
                 "Evaluate model output based on the AudioCaps test set: %s"
-                % "/mnt/fast/nobackup/users/hl01486/datasets/audiocaps_test_subset/2"
+                % "ssssss"
             )
             device = torch.device(f"cuda:{0}")
             name = self.get_validation_folder_name()

@@ -2478,8 +2478,6 @@ class MusicLDM(DDPM):
                 waveform = np.concatenate(selected_wavs, axis=0)[:,0,:]
                 waveform = waveform.reshape(z.shape[0], self.num_stems, waveform.shape[-1]) # back to batch size and multicahnnel
 
-                # test_names =  [str(number) for number in range(4)]                
-                # self.save_waveform(waveform[1][:, np.newaxis, :], "/home/karchkhadze/MusicLDM-Ext/test_folder", name=test_names)
 
 
                 mel = np.concatenate(selected_mels, axis=0)[:,0,:]

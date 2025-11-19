@@ -1,7 +1,7 @@
 import sys
 
 sys.path.append(
-    "/mnt/fast/nobackup/users/hl01486/projects/general_audio_generation/stable_diffusion_for_audio"
+    "../SyncTrack/src"
 )
 
 import torch.nn as nn

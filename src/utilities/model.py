@@ -70,7 +70,7 @@ def get_vocoder(config, device, mel_bins, ckpt_path=None):
             vocoder.remove_weight_norm()
             vocoder.to(device)
         elif mel_bins == 128:
-            with open("/home/kechen/research/CTTM/hifi-gan/config_16k_128.json", "r") as f:
+            with open("./hifi-gan/config_16k_128.json", "r") as f:
                 config = json.load(f)
             config = hifigan.AttrDict(config)
             vocoder = hifigan.Generator(config)

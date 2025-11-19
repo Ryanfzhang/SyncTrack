@@ -1,5 +1,3 @@
-# Ke Chen
-# knutchen@ucsd.edu
 # HTS-AT: A HIERARCHICAL TOKEN-SEMANTIC AUDIO TRANSFORMER FOR SOUND CLASSIFICATION AND DETECTION
 # Some layers designed on the model
 # below codes are based and referred from https://github.com/microsoft/Swin-Transformer

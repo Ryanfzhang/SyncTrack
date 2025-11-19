@@ -779,7 +779,7 @@ class AutoencoderKL(pl.LightningModule):
                     whole_wav_prediction.append(wav_prediction)
         whole_wav_gt = np.concatenate(whole_wav_gt, axis=-1)
         whole_wav_prediction = np.concatenate(whole_wav_prediction, axis=-1)
-        save_path = os.path.join('/home/kechen/research/CTTM/Controllable_TTM/logs/vae-mixup/CTTM-VAE-MIXUP-2023-05-04/2023_05_04_autoencoder_mel_mixup_16_128_4.5e-06_v1_1683453017/generated_files', fnames)
+        save_path = os.path.join('/path/to/file', fnames)
         self.save_wave(
             whole_wav_gt, [save_path + '_hifigan_gt.wav']
         )

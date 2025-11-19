@@ -1,9 +1,7 @@
-# Author: David Harwath
-# with some functions borrowed from https://github.com/SeanNaren/deepspeech.pytorch
 import sys
 
 sys.path.append(
-    "/home/karchkhadze/MusicLDM-Ext/src"
+    "../SyncTrack/src"
 )
 import csv
 import json

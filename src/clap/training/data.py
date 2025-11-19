@@ -200,7 +200,7 @@ class ToyDataset(Dataset):
             .decode()
             .replace(
                 "../workspace",
-                "/home/la/kechen/Research/ke_zsasp/workspace",
+                "/home/mafzhang/Research/ke_zsasp/workspace",
             )
         )
         r_idx = self.fp["index_in_hdf5"][s_index]
