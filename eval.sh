@@ -1,0 +1,1 @@
+python train_musicldm.py --config config/SyncTrack/multichannel_musicldm_slakh_3d_eval.yaml
