@@ -17,11 +17,8 @@ from latent_diffusion.modules.diffusionmodules.util import (
     normalization,
     timestep_embedding,
 )
-# from latent_diffusion.modules.attention import SpatialTransformer
-# from latent_diffusion.modules.attention_ear3d import SpatialTransformer
-# from latent_diffusion.modules.attention_beattf import SpatialTransformer
-# from latent_diffusion.modules.attention_beattf_v2 import SpatialTransformer
-from latent_diffusion.modules.attention_crossattn_beattf_v2 import SpatialTransformer
+
+from latent_diffusion.modules.cross_track_attention import SpatialTransformer
 from einops import rearrange
 
 # dummy replace

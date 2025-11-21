@@ -3198,7 +3198,7 @@ class DiffusionWrapper(pl.LightningModule):
         assert self.conditioning_key in [
             None,
             "concat",
-            "crossattn", # geowizard的condition混合方式
+            "crossattn", 
             "hybrid",
             "adm",
             "film",
@@ -3224,7 +3224,7 @@ class DiffusionWrapper(pl.LightningModule):
             cc = torch.cat(c_crossattn, 1)
             out = self.diffusion_model(x, t)
         elif self.conditioning_key == "hybrid":
-            xc = torch.cat([x] + c_concat, dim=1) # 这里dim是1还是2?
+            xc = torch.cat([x] + c_concat, dim=1) 
             cc = torch.cat(c_crossattn, 1)
             out = self.diffusion_model(xc, t, context=cc)
         elif (
